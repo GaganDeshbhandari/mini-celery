@@ -1,0 +1,12 @@
+venv
+
+graphify-out
+
+__pycache__
+
+.vscode
+
+.agents
+taskqueue/__pycache__/.agents/
+__pycache__/
+*.pyc
