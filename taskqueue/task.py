@@ -23,3 +23,5 @@ def task(func):
     wrapper.delay = delay
     task_registry[func.__name__] = wrapper
     return wrapper
+
+
