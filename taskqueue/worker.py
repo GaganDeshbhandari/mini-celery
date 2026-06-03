@@ -2,11 +2,14 @@
 
 from examples.test_producer import send_email
 from examples.test_failed import fail_task
+from examples.test_retry import flaky_task
 from taskqueue.broker import redis_client
-from taskqueue.serializer import deserialize_task
+from taskqueue.serializer import deserialize_task, serialize_task
 from taskqueue.task import task_registry
 from taskqueue.task_status import set_task_status
 from taskqueue.status import TaskStatus
+
+import json
 
 
 def process_task(task_json):
@@ -15,21 +18,34 @@ def process_task(task_json):
     args = task_data.get("args", [])
     kwargs = task_data.get("kwargs", {})
     task_id = task_data.get("task_id")
+    retries = task_data.get("retries")
+    priority = task_data.get("priority")
 
     func = task_registry.get(task_name)
+
+    MAX_RETRIES = 3
+
     if func is None:
         print(f"Unknown task: {task_name}")
         set_task_status(task_id, TaskStatus.REJECTED)
         return
 
     set_task_status(task_id, TaskStatus.RUNNING)
+
     try:
         func(*args, **kwargs)
         set_task_status(task_id,TaskStatus.SUCCESS)
         print(f"Task completed: {task_name} [{task_id}]")
+
     except Exception as e:
-        set_task_status(task_id,TaskStatus.FAILED)
-        print(f"Task error: {task_name} [{task_id}] {e}")
+        if(retries > MAX_RETRIES):
+            set_task_status(task_id,TaskStatus.FAILED)
+            print(f"Task error: {task_name} [{task_id}] {e}")
+        else:
+            task_data["retries"] += 1
+            print(f"Retrying {task_name}. Attempt {task_data['retries']}")
+            set_task_status(task_id,TaskStatus.PENDING)
+            redis_client.lpush("task_queue",json.dumps(task_data))
 
 
 def run_worker():

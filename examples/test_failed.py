@@ -8,6 +8,7 @@ from taskqueue.task import task
 
 @task
 def fail_task():
+    attempts = 0
     raise Exception("Intentional failure")
 
 
