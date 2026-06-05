@@ -4,6 +4,7 @@ from examples.test_producer import send_email
 from examples.test_failed import fail_task
 from examples.test_retry import flaky_task
 from taskqueue.broker import redis_client
+from taskqueue.dlq import push_to_dlq
 from taskqueue.serializer import deserialize_task, serialize_task
 from taskqueue.task import task_registry
 from taskqueue.task_status import set_task_status
@@ -54,8 +55,12 @@ def process_task(task_json):
 
     except Exception as e:
         if(retries >= MAX_RETRIES):
+            
+            task_data["failed_at"] = datetime.now().isoformat()
+            push_to_dlq(json.dumps(task_data))
             set_task_status(task_id,TaskStatus.FAILED)
             print(f"Task error: {task_name} [{task_id}] {e}")
+            print(f"Task pushed to DLQ: {task_name} [{task_id}]")
         else:
             task_data["retries"] += 1
             wait_time = get_retry_delay(task_data["retries"],5)
