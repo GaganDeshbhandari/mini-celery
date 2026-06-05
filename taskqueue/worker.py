@@ -10,7 +10,14 @@ from taskqueue.task_status import set_task_status
 from taskqueue.status import TaskStatus
 
 import json
+import time
+from datetime import datetime,timedelta
 
+
+MAX_RETRIES = 3
+
+def get_retry_delay(retry, base_delay):
+    return base_delay**retry
 
 def process_task(task_json):
     task_data = deserialize_task(task_json)
@@ -20,15 +27,23 @@ def process_task(task_json):
     task_id = task_data.get("task_id")
     retries = task_data.get("retries")
     priority = task_data.get("priority")
+    scheduled_at = task_data.get("scheduled_at")
 
     func = task_registry.get(task_name)
 
-    MAX_RETRIES = 3
 
     if func is None:
         print(f"Unknown task: {task_name}")
         set_task_status(task_id, TaskStatus.REJECTED)
         return
+
+    if scheduled_at is not None:
+        scheduled_time = datetime.fromisoformat(scheduled_at)
+        if datetime.now() < scheduled_time:
+            # Not time yet — put back and skip
+            redis_client.lpush("task_queue", task_json)
+            return
+
 
     set_task_status(task_id, TaskStatus.RUNNING)
 
@@ -38,12 +53,19 @@ def process_task(task_json):
         print(f"Task completed: {task_name} [{task_id}]")
 
     except Exception as e:
-        if(retries > MAX_RETRIES):
+        if(retries >= MAX_RETRIES):
             set_task_status(task_id,TaskStatus.FAILED)
             print(f"Task error: {task_name} [{task_id}] {e}")
         else:
             task_data["retries"] += 1
-            print(f"Retrying {task_name}. Attempt {task_data['retries']}")
+            wait_time = get_retry_delay(task_data["retries"],5)
+
+            print(f"Retrying task {task_id} in {wait_time} seconds (attempt {task_data["retries"]})")
+
+            # time.sleep(wait_time)
+            scheduled_at = datetime.now() + timedelta(seconds=wait_time)
+            task_data["scheduled_at"] = scheduled_at.isoformat()
+
             set_task_status(task_id,TaskStatus.PENDING)
             redis_client.lpush("task_queue",json.dumps(task_data))
 
