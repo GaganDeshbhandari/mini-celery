@@ -26,33 +26,28 @@ def run_retry_scheduler():
 
     while True:
 
-        result = redis_client.brpop("retry_queue")
+      current_time = datetime.now().timestamp()
 
-        task_json = result[1]
-
-        task_data = json.loads(task_json)
-
-        scheduled_at = task_data.get("scheduled_at")
-
-        if scheduled_at is None:
-            continue
-
-        scheduled_time = datetime.fromisoformat(
-            scheduled_at
+      ready_tasks = redis_client.zrangebyscore(
+          "retry_queue",
+          0,
+          current_time
         )
 
-        if datetime.now() >= scheduled_time:
-            task_data.pop("scheduled_at", None)
-            move_to_priority_queue(task_data)
+      for task_json in ready_tasks:
 
-        else:
+          task_data = json.loads(task_json)
 
-            redis_client.lpush(
-                "retry_queue",
-                task_json
-            )
+          task_data.pop("scheduled_at", None)
 
-            time.sleep(1)
+          move_to_priority_queue(task_data)
+
+          redis_client.zrem(  
+            "retry_queue",
+            task_json
+          )
+
+      time.sleep(1)
 
 
 if __name__ == "__main__":

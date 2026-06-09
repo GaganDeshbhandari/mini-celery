@@ -3,9 +3,11 @@
 from examples.test_producer import send_email
 from examples.test_failed import fail_task
 from examples.test_retry import flaky_task
+from examples.test_priority_queue import *
+from examples.test_priority_retry import *
 from taskqueue.broker import redis_client
 from taskqueue.dlq import push_to_dlq
-from taskqueue.serializer import deserialize_task, serialize_task
+from taskqueue.serializer import deserialize_task
 from taskqueue.task import task_registry
 from taskqueue.task_status import set_task_status
 from taskqueue.status import TaskStatus
@@ -16,6 +18,7 @@ from datetime import datetime,timedelta
 
 
 MAX_RETRIES = 3
+BASE_RETRY_DELAY = 5
 
 def get_retry_delay(retry, base_delay):
     return base_delay**retry
@@ -47,22 +50,32 @@ def process_task(task_json):
         if(retries >= MAX_RETRIES):
 
             task_data["failed_at"] = datetime.now().isoformat()
-            push_to_dlq(json.dumps(task_data))
             set_task_status(task_id,TaskStatus.FAILED)
+
+            push_to_dlq(json.dumps(task_data))
+
             print(f"Task error: {task_name} [{task_id}] {e}")
             print(f"Task pushed to DLQ: {task_name} [{task_id}]")
+
         else:
+
             task_data["retries"] += 1
-            wait_time = get_retry_delay(task_data["retries"],5)
+            wait_time = get_retry_delay(task_data["retries"],BASE_RETRY_DELAY)
 
             print(f"Retrying task {task_id} in {wait_time} seconds (attempt {task_data["retries"]})")
 
-            # time.sleep(wait_time)
             scheduled_at = datetime.now() + timedelta(seconds=wait_time)
             task_data["scheduled_at"] = scheduled_at.isoformat()
 
             set_task_status(task_id,TaskStatus.PENDING)
-            redis_client.lpush("retry_queue",json.dumps(task_data))
+
+            execution_time = scheduled_at.timestamp()
+            redis_client.zadd(
+                "retry_queue",
+                {
+                    json.dumps(task_data): execution_time
+                }
+            )
 
 
 def run_worker():
