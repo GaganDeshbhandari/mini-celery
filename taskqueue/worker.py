@@ -27,8 +27,6 @@ def process_task(task_json):
     kwargs = task_data.get("kwargs", {})
     task_id = task_data.get("task_id")
     retries = task_data.get("retries")
-    priority = task_data.get("priority")
-    scheduled_at = task_data.get("scheduled_at")
 
     func = task_registry.get(task_name)
 
@@ -37,14 +35,6 @@ def process_task(task_json):
         print(f"Unknown task: {task_name}")
         set_task_status(task_id, TaskStatus.REJECTED)
         return
-
-    if scheduled_at is not None:
-        scheduled_time = datetime.fromisoformat(scheduled_at)
-        if datetime.now() < scheduled_time:
-            # Not time yet — put back and skip
-            redis_client.lpush("task_queue", task_json)
-            return
-
 
     set_task_status(task_id, TaskStatus.RUNNING)
 
@@ -55,7 +45,7 @@ def process_task(task_json):
 
     except Exception as e:
         if(retries >= MAX_RETRIES):
-            
+
             task_data["failed_at"] = datetime.now().isoformat()
             push_to_dlq(json.dumps(task_data))
             set_task_status(task_id,TaskStatus.FAILED)
@@ -72,20 +62,39 @@ def process_task(task_json):
             task_data["scheduled_at"] = scheduled_at.isoformat()
 
             set_task_status(task_id,TaskStatus.PENDING)
-            redis_client.lpush("task_queue",json.dumps(task_data))
+            redis_client.lpush("retry_queue",json.dumps(task_data))
 
 
 def run_worker():
     print("Worker started. Waiting for tasks...")
     print(task_registry.keys())
     while True:
-        result = redis_client.brpop("task_queue", timeout=5)
-        if result is None:
-            print("No tasks. Waiting...")
+        critical_result = redis_client.rpop("critical_queue")
+
+        if critical_result:
+            process_task(critical_result)
             continue
 
-        task_json = result[1]
-        process_task(task_json)
+        high_result = redis_client.rpop("high_queue")
+
+        if high_result:
+            process_task(high_result)
+            continue
+
+        medium_result = redis_client.rpop("medium_queue")
+
+        if medium_result:
+            process_task(medium_result)
+            continue
+
+        low_result = redis_client.rpop("low_queue")
+
+        if low_result:
+            process_task(low_result)
+            continue
+
+        print("No tasks. Waiting...")
+        time.sleep(1)
 
 
 if __name__ == "__main__":
