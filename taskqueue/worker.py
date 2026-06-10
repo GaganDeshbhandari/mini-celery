@@ -16,6 +16,10 @@ import json
 import time
 from datetime import datetime,timedelta
 
+import os
+import socket
+
+WORKER_ID = f"{socket.gethostname()}-{os.getpid()}"
 
 MAX_RETRIES = 3
 BASE_RETRY_DELAY = 5
@@ -39,6 +43,8 @@ def process_task(task_json, processing_queue):
     kwargs = task_data.get("kwargs", {})
     task_id = task_data.get("task_id")
     retries = task_data.get("retries")
+
+    task_data["worker_id"] = WORKER_ID
 
     # Will add this later for the recovery_scheduler
     # task_data["processing_started_at"] = (
@@ -72,7 +78,7 @@ def process_task(task_json, processing_queue):
         )
         set_task_status(task_id,TaskStatus.SUCCESS)
 
-        print(f"Task completed: {task_name} [{task_id}]")
+        print(f"[{WORKER_ID}] "f"Task completed: {task_name} [{task_id}]")
 
     except Exception as e:
         if(retries >= MAX_RETRIES):
@@ -87,7 +93,7 @@ def process_task(task_json, processing_queue):
             )
             push_to_dlq(json.dumps(task_data))
 
-            print(f"Task error: {task_name} [{task_id}] {e}")
+            print(f"[{WORKER_ID}] "f"Task error: {task_name} [{task_id}]")
             print(f"Task pushed to DLQ: {task_name} [{task_id}]")
 
         else:
@@ -117,7 +123,6 @@ def process_task(task_json, processing_queue):
 
 
 def run_worker():
-    print("Worker started. Waiting for tasks...")
     print(task_registry.keys())
 
 #     QUEUE_MAP = {
@@ -127,14 +132,22 @@ def run_worker():
 #     "low_queue": "low_processing",
 # }
 
+    redis_client.hset(
+        "workers",
+        WORKER_ID,
+        "ONLINE"
+    )
+
+    print(f"Worker {WORKER_ID} started")
+
     while True:
 
         critical_result = redis_client.blmove(
             "critical_queue",
             "critical_processing",
-            "RIGHT",
-            "LEFT",
-            timeout=1
+            1,
+            src="RIGHT",
+            dest="LEFT"
         )
 
         if critical_result:
@@ -145,9 +158,9 @@ def run_worker():
         high_result = redis_client.blmove(
             "high_queue",
             "high_processing",
-            "RIGHT",
-            "LEFT",
-            timeout=1
+            1,
+            src="RIGHT",
+            dest="LEFT"
         )
 
         if high_result:
@@ -156,12 +169,12 @@ def run_worker():
             continue
 
         medium_result = redis_client.blmove(
-                "medium_queue",
-                "medium_processing",
-                "RIGHT",
-                "LEFT",
-                timeout=1
-            )
+            "medium_queue",
+            "medium_processing",
+            1,
+            src="RIGHT",
+            dest="LEFT"
+        )
 
         if medium_result:
             medium_result = prepare_task(medium_result)
@@ -169,12 +182,12 @@ def run_worker():
             continue
 
         low_result = redis_client.blmove(
-                "low_queue",
-                "low_processing",
-                "RIGHT",
-                "LEFT",
-                timeout=1
-                )
+            "low_queue",
+            "low_processing",
+            1,
+            src="RIGHT",
+            dest="LEFT"
+        )
 
         if low_result:
             low_result = prepare_task(low_result)
@@ -186,4 +199,11 @@ def run_worker():
 
 
 if __name__ == "__main__":
-    run_worker()
+    # run_worker()
+    try:
+        run_worker()
+    finally:
+        redis_client.hdel(
+            "workers",
+            WORKER_ID
+        )
