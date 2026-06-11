@@ -13,7 +13,6 @@ from taskqueue.task_status import set_task_status
 from taskqueue.status import TaskStatus
 
 import json
-import time
 from datetime import datetime,timedelta
 
 import os
@@ -27,14 +26,6 @@ BASE_RETRY_DELAY = 5
 def get_retry_delay(retry, base_delay):
     return base_delay**retry
 
-def prepare_task(task_json):
-    task_data = deserialize_task(task_json)
-
-    task_data["processing_started_at"] = (
-        datetime.now().isoformat()
-    )
-
-    return json.dumps(task_data)
 
 def process_task(task_json, processing_queue):
     task_data = deserialize_task(task_json)
@@ -45,11 +36,6 @@ def process_task(task_json, processing_queue):
     retries = task_data.get("retries")
 
     task_data["worker_id"] = WORKER_ID
-
-    # Will add this later for the recovery_scheduler
-    # task_data["processing_started_at"] = (
-    #         datetime.now().isoformat()
-    #     )
 
     func = task_registry.get(task_name)
 
@@ -66,6 +52,14 @@ def process_task(task_json, processing_queue):
 
         return
 
+    redis_client.hset(
+        f"processing:{task_id}",
+        mapping={
+            "worker_id": WORKER_ID,
+            "started_at": datetime.now().isoformat(),
+            "processing_queue": processing_queue
+        }
+    )
     set_task_status(task_id, TaskStatus.RUNNING)
 
     try:
@@ -76,6 +70,9 @@ def process_task(task_json, processing_queue):
             1,
             task_json
         )
+        redis_client.delete(
+                f"processing:{task_id}"
+            )
         set_task_status(task_id,TaskStatus.SUCCESS)
 
         print(f"[{WORKER_ID}] "f"Task completed: {task_name} [{task_id}]")
@@ -84,6 +81,9 @@ def process_task(task_json, processing_queue):
         if(retries >= MAX_RETRIES):
 
             task_data["failed_at"] = datetime.now().isoformat()
+            redis_client.delete(
+                f"processing:{task_id}"
+            )
             set_task_status(task_id,TaskStatus.FAILED)
 
             redis_client.lrem(
@@ -93,6 +93,7 @@ def process_task(task_json, processing_queue):
             )
             push_to_dlq(json.dumps(task_data))
 
+
             print(f"[{WORKER_ID}] "f"Task error: {task_name} [{task_id}]")
             print(f"Task pushed to DLQ: {task_name} [{task_id}]")
 
@@ -100,6 +101,10 @@ def process_task(task_json, processing_queue):
 
             task_data["retries"] += 1
             wait_time = get_retry_delay(task_data["retries"],BASE_RETRY_DELAY)
+
+            redis_client.delete(
+                f"processing:{task_id}"
+            )
 
             print(f"Retrying task {task_id} in {wait_time} seconds (attempt {task_data["retries"]})")
 
@@ -125,13 +130,6 @@ def process_task(task_json, processing_queue):
 def run_worker():
     print(task_registry.keys())
 
-#     QUEUE_MAP = {
-#     "critical_queue": "critical_processing",
-#     "high_queue": "high_processing",
-#     "medium_queue": "medium_processing",
-#     "low_queue": "low_processing",
-# }
-
     redis_client.hset(
         "workers",
         WORKER_ID,
@@ -151,7 +149,8 @@ def run_worker():
         )
 
         if critical_result:
-            critical_result = prepare_task(critical_result)
+
+
             process_task(critical_result,"critical_processing")
             continue
 
@@ -164,7 +163,6 @@ def run_worker():
         )
 
         if high_result:
-            high_result = prepare_task(high_result)
             process_task(high_result,"high_processing")
             continue
 
@@ -177,7 +175,6 @@ def run_worker():
         )
 
         if medium_result:
-            medium_result = prepare_task(medium_result)
             process_task(medium_result,"medium_processing")
             continue
 
@@ -190,7 +187,6 @@ def run_worker():
         )
 
         if low_result:
-            low_result = prepare_task(low_result)
             process_task(low_result,"low_processing")
             continue
 
