@@ -5,6 +5,7 @@ from examples.test_failed import fail_task
 from examples.test_retry import flaky_task
 from examples.test_priority_queue import *
 from examples.test_priority_retry import *
+from examples.test_heartbeat import *
 from taskqueue.broker import redis_client
 from taskqueue.dlq import push_to_dlq
 from taskqueue.serializer import deserialize_task
@@ -13,15 +14,32 @@ from taskqueue.task_status import set_task_status
 from taskqueue.status import TaskStatus
 
 import json
+import time
 from datetime import datetime,timedelta
 
 import os
 import socket
 
+from threading import Thread
+
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}"
 
 MAX_RETRIES = 3
 BASE_RETRY_DELAY = 5
+HEARTBEAT_INTERVAL = 5
+
+def send_heartbeats():
+    while True:
+
+        redis_client.hset(
+            f"worker:{WORKER_ID}",
+            mapping={
+                "status":"ONLINE",
+                "last_heartbeat" : datetime.now().isoformat()
+            }
+        )
+
+        time.sleep(HEARTBEAT_INTERVAL)
 
 def get_retry_delay(retry, base_delay):
     return base_delay**retry
@@ -35,7 +53,6 @@ def process_task(task_json, processing_queue):
     task_id = task_data.get("task_id")
     retries = task_data.get("retries")
 
-    task_data["worker_id"] = WORKER_ID
 
     func = task_registry.get(task_name)
 
@@ -136,6 +153,13 @@ def run_worker():
         "ONLINE"
     )
 
+    heartbeat_thread = Thread(
+        target=send_heartbeats,
+        daemon=True
+    )
+
+    heartbeat_thread.start()
+
     print(f"Worker {WORKER_ID} started")
 
     while True:
@@ -202,4 +226,7 @@ if __name__ == "__main__":
         redis_client.hdel(
             "workers",
             WORKER_ID
+        )
+        redis_client.delete(
+            f"worker:{WORKER_ID}"
         )
