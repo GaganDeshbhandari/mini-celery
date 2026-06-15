@@ -6,6 +6,7 @@ from examples.test_retry import flaky_task
 from examples.test_priority_queue import *
 from examples.test_priority_retry import *
 from examples.test_heartbeat import *
+from examples.test_dead_worker import *
 from taskqueue.broker import redis_client
 from taskqueue.dlq import push_to_dlq
 from taskqueue.serializer import deserialize_task
@@ -77,6 +78,10 @@ def process_task(task_json, processing_queue):
             "processing_queue": processing_queue
         }
     )
+    redis_client.sadd(
+        f"worker_tasks:{WORKER_ID}",
+        task_id
+    )
     set_task_status(task_id, TaskStatus.RUNNING)
 
     try:
@@ -86,6 +91,10 @@ def process_task(task_json, processing_queue):
             processing_queue,
             1,
             task_json
+        )
+        redis_client.srem(
+            f"worker_tasks:{WORKER_ID}",
+            task_id
         )
         redis_client.delete(
                 f"processing:{task_id}"
@@ -98,6 +107,10 @@ def process_task(task_json, processing_queue):
         if(retries >= MAX_RETRIES):
 
             task_data["failed_at"] = datetime.now().isoformat()
+            redis_client.srem(
+                f"worker_tasks:{WORKER_ID}",
+                task_id
+            )
             redis_client.delete(
                 f"processing:{task_id}"
             )
@@ -119,6 +132,11 @@ def process_task(task_json, processing_queue):
             task_data["retries"] += 1
             wait_time = get_retry_delay(task_data["retries"],BASE_RETRY_DELAY)
 
+
+            redis_client.srem(
+                f"worker_tasks:{WORKER_ID}",
+                task_id
+            )
             redis_client.delete(
                 f"processing:{task_id}"
             )
@@ -229,4 +247,8 @@ if __name__ == "__main__":
         )
         redis_client.delete(
             f"worker:{WORKER_ID}"
+        )
+
+        redis_client.delete(
+            f"worker_tasks:{WORKER_ID}"
         )

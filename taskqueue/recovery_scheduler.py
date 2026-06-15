@@ -22,6 +22,27 @@ QUEUE_MAP = {
     "low_processing": "low_queue"
 }
 
+def recover_task(task_json, task_id, processing_queue,original_queue):
+    redis_client.lrem(
+          processing_queue,
+          1,
+          task_json
+          )
+
+    redis_client.delete(
+          f"processing:{task_id}"
+        )
+
+    set_task_status(
+          task_id,
+          TaskStatus.PENDING
+        )
+
+    redis_client.lpush(
+            original_queue,
+            task_json
+        )
+
 
 def run_recovery_scheduler():
   print("Recovery Scheduler Started...")
@@ -57,25 +78,7 @@ def run_recovery_scheduler():
 
         original_queue = QUEUE_MAP[processing_queue]
 
-        redis_client.lrem(
-          processing_queue,
-          1,
-          task_json
-          )
-
-        redis_client.delete(
-          f"processing:{task_id}"
-        )
-
-        set_task_status(
-          task_id,
-          TaskStatus.PENDING
-        )
-
-        redis_client.lpush(
-            original_queue,
-            task_json
-        )
+        recover_task(task_json,task_id,processing_queue,original_queue)
 
         print(f"Recovered task {task_id}")
 
