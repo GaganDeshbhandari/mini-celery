@@ -10,3 +10,6 @@ __pycache__
 taskqueue/__pycache__/.agents/
 __pycache__/
 *.pyc
+
+
+mini_celery.egg-info/
