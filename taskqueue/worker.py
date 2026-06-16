@@ -13,6 +13,7 @@ from taskqueue.serializer import deserialize_task
 from taskqueue.task import task_registry
 from taskqueue.task_status import set_task_status
 from taskqueue.status import TaskStatus
+from taskqueue.database.repositery import update_task_status, log_execution, log_failure,upsert_worker
 
 import json
 import time
@@ -38,6 +39,11 @@ def send_heartbeats():
                 "status":"ONLINE",
                 "last_heartbeat" : datetime.now().isoformat()
             }
+        )
+
+        upsert_worker(
+            WORKER_ID,
+            "ONLINE"
         )
 
         time.sleep(HEARTBEAT_INTERVAL)
@@ -70,11 +76,13 @@ def process_task(task_json, processing_queue):
 
         return
 
+    started_at = datetime.now()
+
     redis_client.hset(
         f"processing:{task_id}",
         mapping={
             "worker_id": WORKER_ID,
-            "started_at": datetime.now().isoformat(),
+            "started_at": started_at.isoformat(),
             "processing_queue": processing_queue
         }
     )
@@ -82,7 +90,16 @@ def process_task(task_json, processing_queue):
         f"worker_tasks:{WORKER_ID}",
         task_id
     )
+
+
+
+    update_task_status(
+        task_id,
+        "RUNNING",
+        WORKER_ID
+    )
     set_task_status(task_id, TaskStatus.RUNNING)
+
 
     try:
         func(*args, **kwargs)
@@ -98,7 +115,19 @@ def process_task(task_json, processing_queue):
         )
         redis_client.delete(
                 f"processing:{task_id}"
-            )
+        )
+
+        update_task_status(
+            task_id,
+            "SUCCESS"
+        )
+        log_execution(
+            task_id,
+            WORKER_ID,
+            started_at=started_at,
+            completed_at=datetime.now(),
+            status="SUCCESS"
+        )
         set_task_status(task_id,TaskStatus.SUCCESS)
 
         print(f"[{WORKER_ID}] "f"Task completed: {task_name} [{task_id}]")
@@ -115,6 +144,24 @@ def process_task(task_json, processing_queue):
                 f"processing:{task_id}"
             )
             set_task_status(task_id,TaskStatus.FAILED)
+
+            update_task_status(
+                task_id,
+                "FAILED"
+            )
+            log_failure(
+                task_id,
+                str(e),
+                retries
+            )
+
+            log_execution(
+                task_id,
+                WORKER_ID,
+                started_at,
+                datetime.now(),
+                "FAILED"
+            )
 
             redis_client.lrem(
                 processing_queue,
@@ -241,6 +288,10 @@ if __name__ == "__main__":
     try:
         run_worker()
     finally:
+        upsert_worker(
+            WORKER_ID,
+            "OFFLINE"
+        )
         redis_client.hdel(
             "workers",
             WORKER_ID
