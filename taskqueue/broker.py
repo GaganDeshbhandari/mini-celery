@@ -13,7 +13,7 @@ redis_client = redis.Redis(
 
 
 
-
+"""Checks whether the redis_client is connected or not"""
 def ping_broker():
     try:
         return redis_client.ping()

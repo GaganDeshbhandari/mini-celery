@@ -15,7 +15,7 @@ def task(func):
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)
 
-    """Will change the functionality to the Actual Redis Push Logic"""
+    
     def delay(*args, **kwargs):
         priority = kwargs.pop("priority", 1)
         return enqueue_task(func.__name__, args, kwargs, priority)

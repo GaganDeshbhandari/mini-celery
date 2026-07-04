@@ -33,6 +33,7 @@ HEARTBEAT_INTERVAL = 5
 def send_heartbeats():
     while True:
 
+        """Worker Metadata(Status, last heartbeat sent)"""
         redis_client.hset(
             f"worker:{WORKER_ID}",
             mapping={
@@ -78,6 +79,7 @@ def process_task(task_json, processing_queue):
 
     started_at = datetime.now()
 
+    """Stores the metadata of the task that is currently running"""
     redis_client.hset(
         f"processing:{task_id}",
         mapping={
@@ -86,6 +88,8 @@ def process_task(task_json, processing_queue):
             "processing_queue": processing_queue
         }
     )
+
+    """Stores the tasks that is currently held by the worker"""
     redis_client.sadd(
         f"worker_tasks:{WORKER_ID}",
         task_id
@@ -212,6 +216,7 @@ def process_task(task_json, processing_queue):
 def run_worker():
     print(task_registry.keys())
 
+    """Worker Registery : Stores the status of the workers"""
     redis_client.hset(
         "workers",
         WORKER_ID,
@@ -229,6 +234,7 @@ def run_worker():
 
     while True:
 
+        """Moves the tasks from queue to processing queue"""
         critical_result = redis_client.blmove(
             "critical_queue",
             "critical_processing",

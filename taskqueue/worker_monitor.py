@@ -16,13 +16,9 @@ def run_worker_monitor():
       "workers"
     )
 
-    # print("Workers:", workers)
     for worker_id, status in workers.items():
 
-      # print(f"Checking {worker_id}->{status}")
-
       if status == "DEAD":
-        # print(f"Skipping dead worker {worker_id}")
         continue
 
       metadata = redis_client.hgetall(
